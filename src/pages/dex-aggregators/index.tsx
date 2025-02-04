@@ -4,13 +4,14 @@ import {
   Address,
   formatUnits,
   getAddress,
+  Hex,
   parseUnits,
   zeroAddress,
 } from "viem";
 import { arbitrum } from "viem/chains";
 
 import useChainApiClient from "../../hooks/useBicChainClient";
-import { ERC20Token } from "../../types";
+import { ERC20Token, SIGNER_TYPE } from "../../types";
 import { QuotesData, SWAP_EXACT } from "@beincom/chain-client";
 import LoginForm from "../../components/login-form";
 import useBicWallet from "../../hooks/useBicWallet";
@@ -28,6 +29,10 @@ const DexAggregator: NextPage = () => {
   const slippage = "0.5";
   const mockAddress = "0x05736be876755De230e809784DEF1937dCB6303e";
 
+  const [signerType, setSignerType] = useState<SIGNER_TYPE>(
+    SIGNER_TYPE.BIC_SIGNER
+  );
+  const [privateKey, setPrivateKey] = useState<Hex>();
   const [supportTokens, setSupportTokens] = useState<ERC20Token[]>([]);
   const [tokenIn, setTokenIn] = useState<Address>();
   const [tokenInData, setTokenInData] = useState<ERC20Token>();
@@ -40,8 +45,14 @@ const DexAggregator: NextPage = () => {
   const [selectedQuote, setSelectedQuote] = useState<number>(0);
   const [isSwapping, setIsSwapping] = useState<boolean>(false);
 
-  const balances = useBalances(bicWalletAddress!, supportTokens);
-  const smartAccount = useBicSmartAccount();
+  const { smartAccountAddress, smartAccount } = useBicSmartAccount(
+    signerType,
+    privateKey
+  );
+  const balances = useBalances(
+    smartAccountAddress || zeroAddress,
+    supportTokens
+  );
 
   const getSupportTokens = useCallback(async () => {
     if (chainClient) {
@@ -178,18 +189,18 @@ const DexAggregator: NextPage = () => {
 
   const handleBuildSwap = async () => {
     try {
-      if(!smartAccount) { 
+      if (!smartAccount) {
         console.error("Smart account not found");
         return;
       }
       if (quotes.length <= 0) {
         console.error("No quotes found");
         return;
-      };
+      }
       if (!quotes[selectedQuote]) {
         console.error("Selected quote not found");
         return;
-      };
+      }
       const quote = quotes[selectedQuote];
       const smartAccountAddress = await smartAccount?.getSmartAccountAddress();
       const buildSwap = await chainClient.wallet.buildQuote({
@@ -197,20 +208,25 @@ const DexAggregator: NextPage = () => {
         deadline: Math.floor(Date.now() / 1000) + 60 * 10,
         dexType: quote.dexType,
         quoteRaw: quote.quoteRaw,
-        recipient: smartAccountAddress,
         sender: smartAccountAddress,
+        recipient: smartAccountAddress,
         slippageTolerance: Number(parseUnits(slippage, 2)),
       });
 
       const callData = getExecuteBatch({
-        calls:[{
-          data: buildSwap.callData,
-          target: buildSwap.target,
-          value: BigInt(buildSwap.value)
-        }]
+        calls: [
+          {
+            data: buildSwap.callData,
+            target: buildSwap.target,
+            value: BigInt(buildSwap.value),
+          },
+        ],
       });
 
-      const tx = await smartAccount?.executeTransactionWithCallData(callData, false);
+      const tx = await smartAccount?.executeTransactionWithCallData(
+        callData,
+        false
+      );
       console.log("🚀 0xted  ~ handleBuildSwap ~ tx:", tx);
     } catch (error) {
       console.error("Swap failed", error);
@@ -244,6 +260,59 @@ const DexAggregator: NextPage = () => {
       </div>
       <div className="m-6 p-6 w-full mx-auto border rounded-lg shadow-lg bg-white">
         <h2 className="text-xl font-bold mb-4 text-center text-gray-800">
+          Config
+        </h2>
+        <div className="mb-4">
+          {smartAccount && (
+            <div className="mb-4">
+              <label className="block text-gray-700 mb-1">
+                Smart Account Address
+              </label>
+              <div className="p-3 border rounded-lg bg-gray-100 text-gray-600">
+                {smartAccountAddress}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="mb-4">
+          <label className="block text-gray-700 mb-1">Signer Type</label>
+          <div className="flex gap-4">
+            <div className="w-1/3">
+              <select
+                className="w-full h-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={signerType}
+                onChange={(e) => setSignerType(Number(e.target.value))}
+              >
+                <option
+                  key={SIGNER_TYPE.BIC_SIGNER}
+                  value={SIGNER_TYPE.BIC_SIGNER}
+                >
+                  BIC Signer
+                </option>
+                <option
+                  key={SIGNER_TYPE.PRIVATE_KEY}
+                  value={SIGNER_TYPE.PRIVATE_KEY}
+                >
+                  Private Key
+                </option>
+              </select>
+            </div>
+            {signerType === SIGNER_TYPE.PRIVATE_KEY && (
+              <div className="w-2/3">
+                <input
+                  type="text"
+                  placeholder="Private Key"
+                  className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={privateKey || ""}
+                  onChange={(e) => setPrivateKey(e.target.value as Hex)}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="m-6 p-6 w-full mx-auto border rounded-lg shadow-lg bg-white">
+        <h2 className="text-xl font-bold mb-4 text-center text-gray-800">
           Token Swap
         </h2>
 
@@ -271,7 +340,9 @@ const DexAggregator: NextPage = () => {
           </div>
         )}
         <div className="mb-4 flex flex-col gap-4">
-          <label className="block text-gray-700 mb-1">Sell: {balances && balances![tokenIn || "0x"] || "0"}</label>
+          <label className="block text-gray-700 mb-1">
+            Sell: {(balances && balances![tokenIn || "0x"]) || "0"}
+          </label>
           <div className="flex gap-4">
             <div className="w-1/4">
               <select
@@ -301,7 +372,9 @@ const DexAggregator: NextPage = () => {
           </div>
         </div>
         <div className="mb-4 flex flex-col gap-4">
-          <label className="block text-gray-700 mb-1">Buy: {balances && balances![tokenOut || "0x"] || "0"}</label>
+          <label className="block text-gray-700 mb-1">
+            Buy: {(balances && balances![tokenOut || "0x"]) || "0"}
+          </label>
           <div className="flex gap-4">
             <div className="w-1/4">
               <select

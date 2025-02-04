@@ -11,3 +11,9 @@ export type ERC20Token = {
     isHiddenSwap: boolean;
     chainId: string | number;
 };
+
+export enum SIGNER_TYPE {
+    BIC_SIGNER,
+    PRIVATE_KEY,
+    
+}
