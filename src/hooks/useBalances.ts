@@ -28,7 +28,7 @@ const useBalances = (address: Address, tokens: ERC20Token[]) => {
     });
 
     const balances = result.reduce((acc: { [key: Address]: string }, r, i) => {
-      acc[getAddress(tokens[i].address)] = formatUnits(BigInt(r.result as bigint), tokens[i].decimals);
+      acc[getAddress(tokens[i].address)] = formatUnits(BigInt((r.result || 0) as bigint), tokens[i].decimals);
       return acc;
     }, {});
     setBalances(balances);

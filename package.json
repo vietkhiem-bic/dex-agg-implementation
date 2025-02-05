@@ -2,16 +2,17 @@
   "name": "dex-agg-implementation",
   "private": true,
   "version": "0.1.0",
+  "type": "commonjs",
   "scripts": {
     "dev": "next dev -p 8088",
     "build": "next build",
     "start": "next start"
   },
   "dependencies": {
-    "@beincom/aa-coinbase": "^0.0.12-dev",
+    "@beincom/aa-coinbase": "file:../../bic-chain-sdk/packages/aa-coinbase",
     "@beincom/bic-signer-wasm": "^0.0.14",
     "@beincom/chain-client": "file:../../bic-chain-sdk/packages/chain-client",
-    "@beincom/chain-shared": "^0.0.15",
+    "@beincom/chain-shared": "file:../../bic-chain-sdk/packages/chain-shared",
     "@beincom/signers": "^0.0.33-dev",
     "@rainbow-me/rainbowkit": "^2.2.3",
     "@tailwindcss/postcss": "^4.0.3",
@@ -22,6 +23,7 @@
     "postcss": "^8.5.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-toastify": "^11.0.3",
     "tailwindcss": "^4.0.3",
     "usehooks-ts": "^3.1.0",
     "viem": "^2.21.55",

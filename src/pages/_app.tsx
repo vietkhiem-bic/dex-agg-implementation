@@ -5,6 +5,7 @@ import type { AppProps } from 'next/app';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WagmiProvider } from 'wagmi';
 import { RainbowKitProvider } from '@rainbow-me/rainbowkit';
+import { ToastContainer } from 'react-toastify';
 
 import { config } from '../wagmi';
 import { useEffect, useState } from 'react';
@@ -32,6 +33,7 @@ function MyApp({ Component, pageProps }: AppProps) {
           {
             !isLoadWasm && <div>Loading WASM</div>
           }
+          <ToastContainer />
         </RainbowKitProvider>
       </QueryClientProvider>
     </WagmiProvider>

@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { AuthSession } from "../types";
 import axios from "axios";
-import { BIC_APP_API_DEV_URL } from "../utils";
-
-import { useLocalStorage } from "usehooks-ts";
-import { getBicSigner } from "../utils/bic-signer";
 import { jwtDecode } from "jwt-decode";
+import { useLocalStorage } from "usehooks-ts";
+
+import { BIC_APP_API_DEV_URL, getBicSigner } from "../utils";
+import useNotification from "../hooks/useNotification";
 
 const LoginForm = () => {
   const [email, setEmail] = useState("trithanh+2@evol.vn");
@@ -19,9 +19,12 @@ const LoginForm = () => {
     null
   );
 
+  const { notify } = useNotification();
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) {
+      notify("Email and password are required", "error");
       return;
     }
 
@@ -47,34 +50,36 @@ const LoginForm = () => {
       setSession(res.data.data);
     } catch (error) {
       console.error(error);
+      notify("Login error", "error");
     }
   };
 
   const handleLoginWallet = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session || !walletPassword) {
+      notify("Login and wallet password is required", "error");
       return;
     }
 
     try {
       const user = jwtDecode(session.access_token);
       const signer = await getBicSigner();
-      
+
       signer.startSession(session.access_token);
       await signer.login({
         userId: user.sub || "",
         password: walletPassword,
       });
-
     } catch (error) {
-      console.log("🚀 0xted  ~ handleLoginWal ~ error:", error);
-
+      console.error(error);
+      notify("Login wallet error", "error");
     }
   };
 
   const handleRecover = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session || !recoveryPhrase || !walletPassword) {
+      notify("Recovery phrase, wallet password is required", "error");
       return;
     }
 
@@ -89,6 +94,7 @@ const LoginForm = () => {
       });
     } catch (error) {
       console.error(error);
+      notify("Recovery error", "error");
     }
   };
 
