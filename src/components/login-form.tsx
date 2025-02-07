@@ -19,6 +19,8 @@ const LoginForm = () => {
     null
   );
 
+  const [isLoginLoading, setIsLoginLoading] = useState(false);
+
   const { notify } = useNotification();
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -27,8 +29,10 @@ const LoginForm = () => {
       notify("Email and password are required", "error");
       return;
     }
+  
 
     try {
+      setIsLoginLoading(true);
       const res = await axios.post<{ data: AuthSession }>(
         `${BIC_APP_API_DEV_URL}/v1/auth/public/login`,
         {
@@ -48,8 +52,10 @@ const LoginForm = () => {
       );
 
       setSession(res.data.data);
+      setIsLoginLoading(false);
     } catch (error) {
       console.error(error);
+      setIsLoginLoading(false);
       notify("Login error", "error");
     }
   };

@@ -1,7 +1,9 @@
 import type { NextPage } from "next";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Address,
+  encodeFunctionData,
+  erc20Abi,
   formatUnits,
   getAddress,
   Hex,
@@ -9,30 +11,41 @@ import {
   zeroAddress,
 } from "viem";
 import { arbitrum } from "viem/chains";
+import { useWalletClient } from "wagmi";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
+
+import { QuotesData, SWAP_EXACT } from "@beincom/chain-client";
+import { getExecuteBatch } from "@beincom/aa-coinbase";
 
 import useChainApiClient from "../../hooks/useBicChainClient";
-import { ERC20Token, SIGNER_TYPE } from "../../types";
-import { QuotesData, SWAP_EXACT } from "@beincom/chain-client";
-import LoginForm from "../../components/login-form";
-import useBicWallet from "../../hooks/useBicWallet";
+import useNotification from "../../hooks/useNotification";
 import useBalances from "../../hooks/useBalances";
-import useBicSmartAccount from "../../hooks/useBicSmartAccount";
-import { getExecuteBatch } from "@beincom/aa-coinbase";
+import useCoinbaseAccount from "../../hooks/useCoinbaseAccount";
+
+import { ERC20Token, SIGNER_TYPE } from "../../types";
+import LoginForm from "../../components/login-form";
+
+import {
+  ETH_ADDRESS,
+  OWNER_COINBASE_ACCOUNT,
+  TOKENS_SUPPORTED,
+} from "../../utils";
+import { entryPoint06Abi, entryPoint06Address } from "viem/account-abstraction";
 
 const DexAggregator: NextPage = () => {
   const chainClient = useChainApiClient();
-  const bicWalletAddress = useBicWallet();
+  const { data: bundler } = useWalletClient();
 
   const chain = arbitrum;
 
-  // TEMP
-  const slippage = "0.5";
-  const mockAddress = "0x05736be876755De230e809784DEF1937dCB6303e";
+  // #region Config Swap
+  const [slippage, setSlippage] = useState<string>("5");
+  const [deadline, setDeadline] = useState<number>(5 * 60);
 
   const [signerType, setSignerType] = useState<SIGNER_TYPE>(
-    SIGNER_TYPE.BIC_SIGNER
+    SIGNER_TYPE.PRIVATE_KEY
   );
-  const [privateKey, setPrivateKey] = useState<Hex>();
+  const [privateKey, setPrivateKey] = useState<Hex>(OWNER_COINBASE_ACCOUNT);
   const [supportTokens, setSupportTokens] = useState<ERC20Token[]>([]);
   const [tokenIn, setTokenIn] = useState<Address>();
   const [tokenInData, setTokenInData] = useState<ERC20Token>();
@@ -45,10 +58,9 @@ const DexAggregator: NextPage = () => {
   const [selectedQuote, setSelectedQuote] = useState<number>(0);
   const [isSwapping, setIsSwapping] = useState<boolean>(false);
 
-  const { smartAccountAddress, smartAccount } = useBicSmartAccount(
-    signerType,
-    privateKey
-  );
+  const { notify } = useNotification();
+  const { smartAccountAddress, smartAccount, bundlerClient } =
+    useCoinbaseAccount(signerType, privateKey);
   const balances = useBalances(
     smartAccountAddress || zeroAddress,
     supportTokens
@@ -62,41 +74,7 @@ const DexAggregator: NextPage = () => {
         });
         setSupportTokens(tokens);
       } catch (error) {
-        setSupportTokens([
-          {
-            address: getAddress("0xaf88d065e77c8cc2239327c5edb3a432268e5831"),
-            symbol: "USDC",
-            name: "USD Coin",
-            decimals: 6,
-            isNative: false,
-            icon: "https://assets.coingecko.com/coins/images/6319/standard/usdc.png?1696506694",
-            isHiddenBridge: false,
-            isHiddenSwap: false,
-            chainId: Number(arbitrum.id),
-          },
-          {
-            address: getAddress("0xb139400e664144908bF5c9F7a757dC2993eCb139"),
-            symbol: "B139",
-            name: "B139",
-            decimals: 18,
-            chainId: Number(arbitrum.id),
-            isNative: false,
-            icon: "https://chat.beincom.com/api/v4/users/pbeu4myzupy1jrjzhduqwzp53r/image?_=1731405651273",
-            isHiddenBridge: false,
-            isHiddenSwap: false,
-          },
-          {
-            address: getAddress("0xf97f4df75117a78c1A5a0DBb814Af92458539FB4"),
-            symbol: "LINK",
-            name: "ChainLink Token",
-            decimals: 18,
-            chainId: Number(arbitrum.id),
-            isNative: false,
-            icon: "https://assets.coingecko.com/coins/images/877/standard/chainlink-new-logo.png?1696502009",
-            isHiddenBridge: false,
-            isHiddenSwap: false,
-          },
-        ]);
+        setSupportTokens(TOKENS_SUPPORTED);
         console.log("Failed to get supported tokens", error);
       }
     }
@@ -127,7 +105,12 @@ const DexAggregator: NextPage = () => {
   };
 
   const handleGetQuotesForAmountIn = async () => {
-    if (!tokenIn || !tokenOut || !amountIn) return;
+    if (!tokenIn || !tokenOut || !amountIn) {
+      // setAmountOut("0");
+      // setQuotes([]);
+      // notify("Token in, token out, amount in is required", "error");
+      return;
+    }
 
     try {
       const parsedAmountIn = parseUnits(amountIn, tokenInData?.decimals || 18);
@@ -189,47 +172,108 @@ const DexAggregator: NextPage = () => {
 
   const handleBuildSwap = async () => {
     try {
+      if (!bundler) {
+        notify("Connect wallet to setup bundler", "error");
+        return;
+      }
       if (!smartAccount) {
-        console.error("Smart account not found");
+        notify("Smart account not found", "error");
+        return;
+      }
+      if (!bundlerClient) {
+        notify("Bundler client not found", "error");
         return;
       }
       if (quotes.length <= 0) {
-        console.error("No quotes found");
+        notify("Quotes not found", "error");
         return;
       }
       if (!quotes[selectedQuote]) {
-        console.error("Selected quote not found");
+        notify("Quote not found", "error");
         return;
       }
+      setIsSwapping(true);
       const quote = quotes[selectedQuote];
-      const smartAccountAddress = await smartAccount?.getSmartAccountAddress();
+      const smartAccountAddress = smartAccount.address;
       const buildSwap = await chainClient.wallet.buildQuote({
         chainId: chain.id.toString(),
-        deadline: Math.floor(Date.now() / 1000) + 60 * 10,
+        deadline: Math.floor(Date.now() / 1000) + deadline,
         dexType: quote.dexType,
         quoteRaw: quote.quoteRaw,
         sender: smartAccountAddress,
         recipient: smartAccountAddress,
         slippageTolerance: Number(parseUnits(slippage, 2)),
       });
+      const calls = [];
+      if (getAddress(quote.tokenIn) !== ETH_ADDRESS) {
+        console.log(
+          "🚀 0xted  ~ handleBuildSwap ~ uote.amountIn:",
+          BigInt(quote.amountIn)
+        );
+        calls.push({
+          value: BigInt(0),
+          target: getAddress(quote.tokenIn),
+          data: encodeFunctionData({
+            abi: erc20Abi,
+            functionName: "approve",
+            args: [buildSwap.target, BigInt(quote.amountIn)],
+          }),
+        });
+      }
 
-      const callData = getExecuteBatch({
-        calls: [
-          {
-            data: buildSwap.callData,
-            target: buildSwap.target,
-            value: BigInt(buildSwap.value),
-          },
-        ],
+      calls.push({
+        value: BigInt(buildSwap.value),
+        target: buildSwap.target,
+        data: buildSwap.callData,
+      });
+      console.log("🚀 0xted  ~ handleBuildSwap ~ calls:", calls);
+
+      const { callData } = getExecuteBatch({
+        calls,
       });
 
-      const tx = await smartAccount?.executeTransactionWithCallData(
-        callData,
-        false
-      );
-      console.log("🚀 0xted  ~ handleBuildSwap ~ tx:", tx);
+      const rawUserOp = await bundlerClient.prepareUserOperation({
+        account: smartAccount,
+        callData: callData,
+        // calls: calls,
+      });
+      const signature = await smartAccount.signUserOperation(rawUserOp);
+      rawUserOp.signature = signature;
+
+      const hash = await bundler.sendTransaction({
+        to: entryPoint06Address,
+        value: BigInt(0),
+        data: encodeFunctionData({
+          abi: entryPoint06Abi,
+          functionName: "handleOps",
+          args: [
+            [
+              {
+                callData: rawUserOp.callData,
+                paymasterAndData: rawUserOp.paymasterAndData,
+                signature: rawUserOp.signature,
+                callGasLimit: rawUserOp.callGasLimit,
+                initCode: rawUserOp.initCode || "0x",
+                maxFeePerGas: rawUserOp.maxFeePerGas,
+                maxPriorityFeePerGas: rawUserOp.maxPriorityFeePerGas,
+                nonce: rawUserOp.nonce,
+                preVerificationGas: rawUserOp.preVerificationGas,
+                sender: rawUserOp.sender,
+                verificationGasLimit: rawUserOp.verificationGasLimit,
+              },
+            ],
+            "0x11e479dc86dda6a435c504b8ff17bcdba2a8dfe3",
+          ],
+        }),
+      });
+
+      notify("Swap success: " + hash, "success");
+
+      setIsSwapping(false);
     } catch (error) {
-      console.error("Swap failed", error);
+      setIsSwapping(false);
+      notify("Swap failed", "error");
+      console.log("Swap failed", error);
     }
   };
 
@@ -249,9 +293,21 @@ const DexAggregator: NextPage = () => {
     return () => clearInterval(interval);
   }, [amountIn, amountOut, tokenIn, tokenOut, swapExactType]);
 
-  // useEffect(() => {
-  //   handleGetQuotesForAmountOut();
-  // }, [amountOut, tokenIn, tokenOut]);
+  const amountsUsd = useMemo(() => {
+    if (!quotes[selectedQuote]) return { amountInUsd: 0, amountOutUsd: 0 };
+    const quote = quotes[selectedQuote];
+    return { amountInUsd: Number(quote.amountInUsd).toFixed(2), amountOutUsd: Number(quote.amountOutUsd).toFixed(2) };
+  }, [quotes, selectedQuote]);
+
+  const minimumAmount = useMemo(() => {
+    if (!quotes[selectedQuote]) return 0;
+    const quote = quotes[selectedQuote];
+    const MAX_BPS = BigInt(10000);
+    const minAmountOut =
+      (BigInt(quote.amountOut) * (MAX_BPS - BigInt(Number(slippage) * 100))) /
+      MAX_BPS;
+    return formatUnits(minAmountOut, tokenOutData?.decimals || 18);
+  }, [quotes, selectedQuote]);
 
   return (
     <div className="w-full">
@@ -259,9 +315,6 @@ const DexAggregator: NextPage = () => {
         <LoginForm />
       </div>
       <div className="m-6 p-6 w-full mx-auto border rounded-lg shadow-lg bg-white">
-        <h2 className="text-xl font-bold mb-4 text-center text-gray-800">
-          Config
-        </h2>
         <div className="mb-4">
           {smartAccount && (
             <div className="mb-4">
@@ -275,6 +328,10 @@ const DexAggregator: NextPage = () => {
           )}
         </div>
         <div className="mb-4">
+          <p>Bundler:</p>
+          <ConnectButton />
+        </div>
+        <div className="mb-4">
           <label className="block text-gray-700 mb-1">Signer Type</label>
           <div className="flex gap-4">
             <div className="w-1/3">
@@ -283,12 +340,12 @@ const DexAggregator: NextPage = () => {
                 value={signerType}
                 onChange={(e) => setSignerType(Number(e.target.value))}
               >
-                <option
+                {/* <option
                   key={SIGNER_TYPE.BIC_SIGNER}
                   value={SIGNER_TYPE.BIC_SIGNER}
                 >
                   BIC Signer
-                </option>
+                </option> */}
                 <option
                   key={SIGNER_TYPE.PRIVATE_KEY}
                   value={SIGNER_TYPE.PRIVATE_KEY}
@@ -315,7 +372,6 @@ const DexAggregator: NextPage = () => {
         <h2 className="text-xl font-bold mb-4 text-center text-gray-800">
           Token Swap
         </h2>
-
         {quotes.length > 0 && (
           <div className="mb-4">
             <h2 className="text-xl font-bold mb-4 text-gray-800">Quotes:</h2>
@@ -337,8 +393,41 @@ const DexAggregator: NextPage = () => {
                 </div>
               ))}
             </div>
+            {quotes[selectedQuote] && (
+              <div className="text-gray-600">
+                <p>Price Impact: {quotes[selectedQuote].priceImpact}%</p>
+                <p>Minium Amount: {minimumAmount}</p>
+              </div>
+            )}
           </div>
         )}
+        <div className="mb-4">
+          <h2 className="text-xl font-bold mb-4 text-gray-800">
+            Setting swap:
+          </h2>
+          <div className="mb-4 flex gap-4 w-1/4">
+            <div className="w-1/2">
+              <label className="block text-gray-700 mb-1">Slippage (%)</label>
+              <input
+                type="number"
+                className="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                value={slippage}
+                onChange={(e) => setSlippage(e.target.value)}
+              />
+            </div>
+            <div className="w-1/2">
+              <label className="block text-gray-700 mb-1">
+                Deadline (seconds)
+              </label>
+              <input
+                type="number"
+                className="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                value={deadline}
+                onChange={(e) => setDeadline(Number(e.target.value))}
+              />
+            </div>
+          </div>
+        </div>
         <div className="mb-4 flex flex-col gap-4">
           <label className="block text-gray-700 mb-1">
             Sell: {(balances && balances![tokenIn || "0x"]) || "0"}
@@ -359,15 +448,20 @@ const DexAggregator: NextPage = () => {
               </select>
             </div>
             <div className="w-3/4">
-              <input
-                type="number"
-                className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={amountIn}
-                onChange={(e) => {
-                  setAmountIn(e.target.value);
-                  setSwapExactType(SWAP_EXACT.EXACT_IN);
-                }}
-              />
+              <div className="relative">
+                <input
+                  type="number"
+                  value={amountIn}
+                  onChange={(e) => {
+                    setAmountIn(e.target.value);
+                    setSwapExactType(SWAP_EXACT.EXACT_IN);
+                  }}
+                  className="block w-full p-4 text-md text-gray-900 border border-gray-300 rounded-lg bg-gray-50 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500"
+                />
+                <p className="text-white absolute end-2.5 bottom-2.5 bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:outline-none focus:ring-blue-300 font-medium rounded-lg text-sm px-4 py-2 dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800">
+                  {amountsUsd.amountInUsd}
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -391,12 +485,16 @@ const DexAggregator: NextPage = () => {
               </select>
             </div>
             <div className="w-3/4">
-              <input
-                type="text"
-                className="w-full p-3 border rounded-lg bg-gray-100 text-gray-600"
-                value={amountOut}
-                readOnly
-              />
+              <div className="relative">
+                <input
+                  value={amountOut}
+                  className="block w-full p-4 text-md text-gray-900 border border-gray-300 rounded-lg bg-gray-50 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white dark:focus:ring-blue-500 dark:focus:border-blue-500"
+                  readOnly
+                />
+                <p className="text-white absolute end-2.5 bottom-2.5 bg-blue-700 hover:bg-blue-800 focus:ring-4 focus:outline-none focus:ring-blue-300 font-medium rounded-lg text-sm px-4 py-2 dark:bg-blue-600 dark:hover:bg-blue-700 dark:focus:ring-blue-800">
+                  {amountsUsd.amountOutUsd}
+                </p>
+              </div>
             </div>
           </div>
         </div>
