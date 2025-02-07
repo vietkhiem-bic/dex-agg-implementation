@@ -57,6 +57,7 @@ const DexAggregator: NextPage = () => {
   const [quotes, setQuotes] = useState<QuotesData["quotes"]>([]);
   const [selectedQuote, setSelectedQuote] = useState<number>(0);
   const [isSwapping, setIsSwapping] = useState<boolean>(false);
+  const [hash, setHash] = useState<Hex>();
 
   const { notify } = useNotification();
   const { smartAccountAddress, smartAccount, bundlerClient } =
@@ -268,7 +269,7 @@ const DexAggregator: NextPage = () => {
       });
 
       notify("Swap success: " + hash, "success");
-
+      setHash(hash);
       setIsSwapping(false);
     } catch (error) {
       setIsSwapping(false);
@@ -398,6 +399,18 @@ const DexAggregator: NextPage = () => {
                 <p>Price Impact: {quotes[selectedQuote].priceImpact}%</p>
                 <p>Minium Amount: {minimumAmount}</p>
               </div>
+            )}
+            {hash && (
+                <div className="p-3 border rounded-lg bg-gray-100 text-gray-600">
+                <a
+                  href={`${arbitrum.blockExplorers.default.url}/tx/${hash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:underline"
+                >
+                  {hash}
+                </a>
+                </div>
             )}
           </div>
         )}
